@@ -105,7 +105,7 @@ def convertCsvToAvro(parser, opts, inputs, output):
 
   # Unescape our delimiter, if available, for convenience.
   if opts.delimiter:
-    delimiter = opts.delimiter.decode('unicode_escape')
+    delimiter = opts.delimiter.decode('string-escape')
   else:
     # Sniff out a dialect for the CSV file and use its delimiter.
     dialect = csv.Sniffer().sniff(sampleData)
@@ -174,8 +174,27 @@ def convertCsvToAvro(parser, opts, inputs, output):
   dataFileWriter.close()
 
 
-def convertAvroToCsv(opts, inputs, output):
-  pass
+def convertAvroToCsv(parser, opts, inputs, output):
+  """ Read the Avro files and convert them all to CSV """
+
+  csvFileWriter = csv.writer(open(output, 'wb'), delimiter=str(opts.delimiter.decode('string-escape')), lineterminator='\n')
+
+  datumReader = io.DatumReader()
+  if opts.schema:
+    datumReader = io.DatumReader(expected=schema.parse(open(opts.schema).read()))
+
+  # Get schema fields early on.
+  if opts.schema:
+    fields = schema.parse(open(opts.schema).read()).fields
+  else:
+    fields = datafile.DataFileReader(open(inputs[0]), datumReader).datum_reader.writers_schema.fields
+
+  for inputfile in inputs:
+    openfile = datafile.DataFileReader(open(inputfile), datumReader)
+
+    for record in openfile:
+      csvRow = [record[field.name] for field in fields]
+      csvFileWriter.writerow(csvRow)
 
 def main():
   parser = createOptionParser()
