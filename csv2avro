@@ -17,10 +17,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-import sys
-import os
-
+import functools
 import optparse
 
 import csv
@@ -29,7 +26,7 @@ from avro import schema, io, datafile
 
 VERSION="0.1"
 
-PRIMITIVE_DATA_MAP = {
+PRIMITIVE_DATA_TYPE_MAP = {
     'string': lambda x: str(x),
     'boolean': lambda x: bool(x),
     'bytes': lambda x: bytes(x),
@@ -40,13 +37,30 @@ PRIMITIVE_DATA_MAP = {
     'null': lambda x: None,
     }
 
+def dataTypeMapper(names, namesdict, types, defaults, lineData):
+  """ Convert a given primitive data to its specified schema type. Use defaults if nulls are encountered for non sequence types."""
+  # Try converting the data to its actual type.
+  for index, name in enumerate(names):
+    data = lineData[index]
+    try:
+      namesdict[name] = PRIMITIVE_DATA_TYPE_MAP[types[index]](data)
+    except ValueError as valErr:
+      # We failed. So lets see if we have a default value to use?
+      if defaults[index]!= None:
+        namesdict[name]= PRIMITIVE_DATA_TYPE_MAP[types[index]](defaults[index])
+      else:
+        # We tried what we could. Its definitely the data or the schema that's wrong.
+        # Raise the exception and let the user ponder.
+        raise valErr
+  return namesdict
+
 def createOptionParser():
   """ Create an command line options parser that supports options for various types of delimiter seperated files. """
   usage = "Usage: %prog [options] INPUTFILES... OUTPUTFILE"
   version = "%prog " + VERSION
   parser = optparse.OptionParser(usage=usage, version=version)
   parser.add_option('-d', '--delimiter', dest='delimiter', default=',', help="Specify a delimiter for the CSV file's records. Default is comma (',').")
-  parser.add_option('-f', '--header', dest='header', help="Specify that the first record in the CSV file is (or must be) a header.")
+  parser.add_option('-f', '--header', dest='header', action='store_true', default=False, help="Specify that the first record in the CSV file is (or must be) a header.")
   parser.add_option('-r', '--reverse', action='store_true', default=False, dest='reverse', help="Convertread/write as.")
   parser.add_option('-s', '--schema-file', dest='schema', help="Specify a schema to read/write as.")
   parser.add_option('-n', '--record-name', dest='name', help="Specify a record name. Used when no schema file is provided. Default is the first input filename")
@@ -126,25 +140,37 @@ def convertCsvToAvro(parser, opts, inputs, output):
   # We have the schema ready. Lets begin converting.
 
   fieldNames = [field.name for field in outputSchema.fields]
+  fieldNamesDict = dict((name, None) for name in fieldNames)
   fieldTypes = [field.type.type for field in outputSchema.fields]
   fieldDefaults = [field.default for field in outputSchema.fields]
 
-  datumWriter = io.DatumWriter(outputSchema)
+  dataMapper = functools.partial(dataTypeMapper, fieldNames, fieldNamesDict, fieldTypes, fieldDefaults)
 
+  datumWriter = io.DatumWriter(outputSchema)
   dataFileWriter = datafile.DataFileWriter(open(output, 'a+' if opts.append else 'w'), datumWriter, None if opts.append else outputSchema, 'deflate' if opts.compress else 'null')
 
+  # Convert all given input files to avro.
   for inputfile in inputs:
+
     openfile = open(inputfile)
+
+    # If CSV file has a header, ignore it by reading it out.
+    if opts.header:
+      openfile.readline()
+
     for lineno, line in enumerate(openfile):
-      print zip(fieldTypes, fieldDefaults, line.strip().split(delimiter))
+
+      # Convert the data types to fit the schema.
       try:
-        dataMapper = lambda (type, default, data): PRIMITIVE_DATA_MAP[type](data) if data != None else PRIMITIVE_DATA_MAP[type](default)
-        lineData = map(dataMapper , zip(fieldTypes, fieldDefaults, line.strip().split(delimiter)))
+        lineData = dataMapper(line.strip().split(delimiter))
       except ValueError as valErr:
         print("Recieved a value error on line %d of file %s." % (lineno+1, inputfile))
         raise valErr
-      dataFileWriter.append(dict(zip(fieldNames, lineData)))
 
+      # Append the converted CSV record to the Avro data file.
+      dataFileWriter.append(lineData)
+
+  # We've finished converting all files. Close and exit.
   dataFileWriter.close()
 
 
