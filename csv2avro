@@ -25,9 +25,20 @@ import optparse
 
 import csv
 
-from avro import schema, io
+from avro import schema, io, datafile
 
 VERSION="0.1"
+
+PRIMITIVE_DATA_MAP = {
+    'string': lambda x: str(x),
+    'boolean': lambda x: bool(x),
+    'bytes': lambda x: bytes(x),
+    'int': lambda x: int(x),
+    'long': lambda x: long(x),
+    'float': lambda x: float(x),
+    'double': lambda x: float(x),
+    'null': lambda x: None,
+    }
 
 def createOptionParser():
   """ Create an command line options parser that supports options for various types of delimiter seperated files. """
@@ -36,9 +47,12 @@ def createOptionParser():
   parser = optparse.OptionParser(usage=usage, version=version)
   parser.add_option('-d', '--delimiter', dest='delimiter', default=',', help="Specify a delimiter for the CSV file's records. Default is comma (',').")
   parser.add_option('-f', '--header', dest='header', help="Specify that the first record in the CSV file is (or must be) a header.")
-  parser.add_option('-r', '--reverse', dest='reverse', help="Convertread/write as.")
+  parser.add_option('-r', '--reverse', action='store_true', default=False, dest='reverse', help="Convertread/write as.")
   parser.add_option('-s', '--schema-file', dest='schema', help="Specify a schema to read/write as.")
   parser.add_option('-n', '--record-name', dest='name', help="Specify a record name. Used when no schema file is provided. Default is the first input filename")
+  parser.add_option('-c', '--compress', dest='compress', action='store_true', default=False, help="Toggle compression of avro output file using 'deflate' codec.")
+  parser.add_option('-o', '--overwrite', dest='overwrite', action='store_true', default=False, help="Overwrite existing output file if it already exists.")
+  parser.add_option('-a', '--append', dest='append', action='store_true', default=False, help="Append to existing output file if it already exists.")
   return parser
 
 def validateOptions(parser):
@@ -46,46 +60,93 @@ def validateOptions(parser):
   (opts, args) = parser.parse_args()
 
   # Perform any required validation
+  if opts.overwrite and opts.append:
+    parser.error("Can't specify both overwrite and append options together.")
+
   if opts.schema:
     try:
-      schema.parse(open(opts.schema))
+      schema.parse(open(opts.schema).read())
     except:
-      parser.error("Given schema %s is not a valid Avro schema." % opts.schema)
+      parser.error("Given schema file %s is not a valid Avro schema file." % opts.schema)
 
   return (opts, args)
 
 def convertCsvToAvro(parser, opts, inputs, output):
   """ Read the CSV files and convert them to Avro. """
 
+  # Ensure that the output destination does not already exist, if no overwriting flag is set.
+  if not opts.overwrite and not opts.append:
+    try:
+      open(output)
+      parser.error("Output file already exists. Provide an --overwrite option if you want to force an overwrite or an --append option if you want to append to it.")
+    except IOError:
+      pass
+
+  # Retrieve some sample data to sniff first.
+  firstFile = open(inputs[0])
+  sampleData = firstFile.read(5*1024) # TODO: Make this configurable as an advanced option?
+  firstFile.seek(0)
+  header = firstFile.readline()
+  firstFile.close()
+
+  # Unescape our delimiter, if available, for convenience.
+  if opts.delimiter:
+    delimiter = opts.delimiter.decode('unicode_escape')
+  else:
+    # Sniff out a dialect for the CSV file and use its delimiter.
+    dialect = csv.Sniffer().sniff(sampleData)
+    delimiter = dialect.delimiter
+
   # If we got a schema to use, lets use it.
   if opts.schema:
     try:
-      outputSchema = schema.parse(open(opts.schema))
+      outputSchema = schema.parse(open(opts.schema).read())
     except:
       parser.error("Given schema is invalid. Please provide a proper Avro schema")
   else:
-    # We don't have a schema.
-    # We'll sniff 5 MB of the CSV data and gather what we can.
-    firstFile = open(inputs[0])
-    sampleData = firstFile.read(5*1024) # TODO: Make this configurable as an advanced option.
-    firstFile.seek(0)
-    header = firstFile.readline()
-    firstFile.close()
-
     # Check if we have a header at least?
-    if csv.Sniffer().has_header(sampleData):
-      dialect = csv.Sniffer().sniff(sampleData)
-    else:
+    if not csv.Sniffer().has_header(sampleData):
       parser.error("The input CSV files don't carry a header. Please provide a schema file or a proper CSV input file with headers.")
 
-    # Construct the schema
+    # Get the 'record' name.
     name = inputs[0]
     if opts.name:
       name = opts.name
-    # outputSchema = schema.RecordSchema('record', name)
-    for fieldName in header.split(dialect.delimiter):
-      pass
-      #fieldList.append(Field())
+
+    # Construct record fields.
+    # NOTE: All fields will default to 'string' type as headers don't tell us data types.
+    #       To use your own types, provide a JSON schema instead.
+    fieldList = []
+    for fieldName in header.strip().split(delimiter):
+      fieldList.append({'type': 'string', 'name': fieldName})
+
+    # Schema can now be constructed.
+    outputSchema = schema.RecordSchema(name, None, fieldList)
+
+  # We have the schema ready. Lets begin converting.
+
+  fieldNames = [field.name for field in outputSchema.fields]
+  fieldTypes = [field.type.type for field in outputSchema.fields]
+  fieldDefaults = [field.default for field in outputSchema.fields]
+
+  datumWriter = io.DatumWriter(outputSchema)
+
+  dataFileWriter = datafile.DataFileWriter(open(output, 'a+' if opts.append else 'w'), datumWriter, None if opts.append else outputSchema, 'deflate' if opts.compress else 'null')
+
+  for inputfile in inputs:
+    openfile = open(inputfile)
+    for lineno, line in enumerate(openfile):
+      print zip(fieldTypes, fieldDefaults, line.strip().split(delimiter))
+      try:
+        dataMapper = lambda (type, default, data): PRIMITIVE_DATA_MAP[type](data) if data != None else PRIMITIVE_DATA_MAP[type](default)
+        lineData = map(dataMapper , zip(fieldTypes, fieldDefaults, line.strip().split(delimiter)))
+      except ValueError as valErr:
+        print("Recieved a value error on line %d of file %s." % (lineno+1, inputfile))
+        raise valErr
+      dataFileWriter.append(dict(zip(fieldNames, lineData)))
+
+  dataFileWriter.close()
+
 
 def convertAvroToCsv(opts, inputs, output):
   pass
