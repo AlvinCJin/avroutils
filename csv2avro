@@ -179,16 +179,24 @@ def convertAvroToCsv(parser, opts, inputs, output):
 
   csvFileWriter = csv.writer(open(output, 'wb'), delimiter=str(opts.delimiter.decode('string-escape')), lineterminator='\n')
 
+  # Create our datum (record) reader.
   datumReader = io.DatumReader()
   if opts.schema:
+    # If we have a custom schema, read that alone for the datum.
     datumReader = io.DatumReader(expected=schema.parse(open(opts.schema).read()))
 
   # Get schema fields early on.
   if opts.schema:
     fields = schema.parse(open(opts.schema).read()).fields
   else:
+    # Get it from the first file if a custom schema was not passed.
     fields = datafile.DataFileReader(open(inputs[0]), datumReader).datum_reader.writers_schema.fields
 
+  # If the header flag is on, write the header as the first record.
+  if opts.header:
+    csvFileWriter.writerow([field.name for field in fields])
+
+  # Convert all given input files to CSV.
   for inputfile in inputs:
     openfile = datafile.DataFileReader(open(inputfile), datumReader)
 
@@ -211,7 +219,6 @@ def main():
     convertAvroToCsv(parser, opts, inputs, output)
   else:
     convertCsvToAvro(parser, opts, inputs, output)
-
 
 if __name__=='__main__':
   main()

@@ -1,0 +1,4 @@
+Avro Data Conversion Utilities
+
+CSV Utils -> csv2avro
+Do a `./csv2avro -h` for more details.
