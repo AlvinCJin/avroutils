@@ -56,17 +56,31 @@ def dataTypeMapper(names, namesdict, types, defaults, lineData):
 
 def createOptionParser():
   """ Create an command line options parser that supports options for various types of delimiter seperated files. """
+
   usage = "Usage: %prog [options] INPUTFILES... OUTPUTFILE"
   version = "%prog " + VERSION
   parser = optparse.OptionParser(usage=usage, version=version)
-  parser.add_option('-d', '--delimiter', dest='delimiter', default=',', help="Specify a delimiter for the CSV file's records. Default is comma (',').")
-  parser.add_option('-f', '--header', dest='header', action='store_true', default=False, help="Specify that the first record in the CSV file is (or must be) a header.")
-  parser.add_option('-r', '--reverse', action='store_true', default=False, dest='reverse', help="Convertread/write as.")
-  parser.add_option('-s', '--schema-file', dest='schema', help="Specify a schema to read/write as.")
-  parser.add_option('-n', '--record-name', dest='name', help="Specify a record name. Used when no schema file is provided. Default is the first input filename")
-  parser.add_option('-c', '--compress', dest='compress', action='store_true', default=False, help="Toggle compression of avro output file using 'deflate' codec.")
-  parser.add_option('-o', '--overwrite', dest='overwrite', action='store_true', default=False, help="Overwrite existing output file if it already exists.")
-  parser.add_option('-a', '--append', dest='append', action='store_true', default=False, help="Append to existing output file if it already exists.")
+
+  generalGroup = optparse.OptionGroup(parser, "[General]", "General, utility related options")
+  generalGroup.add_option('-r', '--reverse', action='store_true', default=False, dest='reverse', help="Convertread/write as.")
+  generalGroup.add_option('-o', '--overwrite', dest='overwrite', action='store_true', default=False, help="Overwrite existing output file if it already exists.")
+  generalGroup.add_option('-a', '--append', dest='append', action='store_true', default=False, help="Append to existing output file if it already exists.")
+
+  parser.add_option_group(generalGroup)
+
+  avroGroup = optparse.OptionGroup(parser, "[Avro]", "Avro file input/output related options")
+  avroGroup.add_option('-s', '--schema-file', dest='schema', help="Specify a schema to read/write as.")
+  avroGroup.add_option('-n', '--record-name', dest='name', help="Specify a record name. Used when no schema file is provided. Default is the first input filename")
+  avroGroup.add_option('-c', '--compress', dest='compress', action='store_true', default=False, help="Toggle compression of avro output file using 'deflate' codec.")
+
+  parser.add_option_group(avroGroup)
+
+  csvGroup = optparse.OptionGroup(parser, "[CSV]", "CSV file input/output related options")
+  csvGroup.add_option('-d', '--delimiter', dest='delimiter', default=',', help="Specify a delimiter for the CSV file's records (ex: '\\x1b'. Default is comma (',').")
+  csvGroup.add_option('-f', '--header', dest='header', action='store_true', default=False, help="Specify that the first record in the CSV file is (or must be) a header.")
+
+  parser.add_option_group(csvGroup)
+
   return parser
 
 def validateOptions(parser):
